@@ -13,8 +13,6 @@ def load_h5(h5_path):
         print('List of arrays in input file:', list(hf.keys()))
         X = np.array(hf.get('data'))
         Y = np.array(hf.get('label'))
-        print('Shape of X:', X.shape)
-        print('Shape of Y:', Y.shape)
     return X, Y
 
 def spline_up(x_lr, r):

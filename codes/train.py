@@ -11,6 +11,7 @@ from models.tfilm import get_tfilm
 
 
 def load_h5(path):
+    """Load data from an HDF5 file."""
     with h5py.File(path, "r") as f:
         X = torch.tensor(f["X"][:], dtype=torch.float32)
         Y = torch.tensor(f["Y"][:], dtype=torch.float32)
@@ -18,6 +19,7 @@ def load_h5(path):
 
 
 def make_parser():
+    """Create an argument parser for training."""
     train_parser = argparse.ArgumentParser()
 
     train_parser.add_argument('--model', default='afilm',
@@ -39,7 +41,7 @@ def make_parser():
         help='optimization algorithm')
     train_parser.add_argument('--lr', default=3e-4, type=float,
         help='learning rate')
-    train_parser.add_argument('--save_path', default="model.pth",
+    train_parser.add_argument('--save_path', default="model_afilm_single_2.pth",
         help='path to save the model')
     train_parser.add_argument('--r', type=int, default=4, help='upscaling factor')
     train_parser.add_argument('--pool_size', type=int, default=4, help='size of pooling window')
@@ -48,6 +50,7 @@ def make_parser():
 
 
 def get_model(args):
+    """Get the model based on the specified type."""
     if args.model == 'tfilm':
         model = get_tfilm(n_layers=args.layers, scale=args.r)
     elif args.model == 'afilm':
@@ -58,14 +61,23 @@ def get_model(args):
 
 
 def train(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """Train the model based on the provided arguments."""
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+
+    print(f"Using device: {device}")
+    print(f"Training model: {args.model} with {args.layers} layers and upscaling factor {args.r}")
 
     # Load data
     X_train, Y_train = load_h5(args.train)
     X_val, Y_val = load_h5(args.val)
 
     train_loader = DataLoader(TensorDataset(X_train, Y_train), 
-                              batch_size=args.batch_size, shuffle=True)
+                              batch_size=args.batch_size, shuffle=True, num_workers=2)
     val_loader = DataLoader(TensorDataset(X_val, Y_val), 
                             batch_size=args.batch_size)
 
@@ -88,6 +100,10 @@ def train(args):
             X, Y = X.to(device), Y.to(device)
             optimizer.zero_grad()
             outputs = model(X)
+            if outputs.dim() == 3 and outputs.shape[-1] == 2:
+                outputs = outputs[:, :, 0]
+            # print(f"Outputs shape: {outputs.shape}")
+            # print(f"Y shape: {Y.shape}")
             loss = criterion(outputs, Y)
             loss.backward()
             optimizer.step()
@@ -109,8 +125,9 @@ def train(args):
 
         print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.6f} - Val Loss: {val_loss:.6f}")
 
-        # Save checkpoint
-        torch.save(model.state_dict(), args.save_path)
+        # Save checkpoint with epoch number
+        # torch.save(model.state_dict(), args.save_path)
+        torch.save(model.state_dict(), f"{args.save_path}_epoch{epoch+1}.pth")
 
 
 def main():
