@@ -52,17 +52,14 @@ class AFiLM(nn.Module):
         """
         batch_size, steps, n_filters = x.shape
         n_blocks = steps // self.block_size
-
-        # Vérification de compatibilité
-        if steps % self.block_size != 0:
-            # Pad ou truncate si nécessaire
-            new_steps = n_blocks * self.block_size
-            if steps > new_steps:
-                x = x[:, :new_steps, :]
-            else:
-                padding = new_steps - steps
-                x = F.pad(x, (0, 0, 0, padding))
-            steps = new_steps
+        
+        # padding si nécessaire
+        remainder = steps % self.block_size
+        if remainder != 0:
+            padding = self.block_size - remainder
+            x = F.pad(x, (0, 0, 0, padding))  # Pad sur la dimension temporelle
+            steps = steps + padding
+            n_blocks = steps // self.block_size
 
         # reshape en blocs
         x = x.view(batch_size, n_blocks, self.block_size, n_filters)
@@ -73,6 +70,11 @@ class AFiLM(nn.Module):
 
         # retour à la forme originale
         x_out = x_out.view(batch_size, steps, n_filters)
+        
+        # enlever le padding si nécessaire
+        if remainder != 0:
+            x_out = x_out[:, :-padding, :]
+            
         return x_out
 
     def forward(self, x):
@@ -84,20 +86,19 @@ class AFiLM(nn.Module):
         x = self.apply_normalizer(x, x_norm)
         return x
     
-
 class AFiLMNet(nn.Module):
     """AFiLMNet: Adaptive Feature-wise Linear Modulation Network."""
-    def __init__(self, n_layers=4, scale=4):
+    def __init__(self, n_layers=4, scale=4, input_length=1024):  # Changé par défaut à 1024
         """Initializes the AFiLMNet module."""
         super(AFiLMNet, self).__init__()
 
         self.n_layers = n_layers
+        self.input_length = input_length
         self.n_filters = [128, 256, 512, 512, 512, 512, 512, 512]
         self.n_filtersizes = [65, 33, 17, 9, 9, 9, 9, 9, 9]
 
-        self.down_blocks = nn.ModuleList()
-
         # DOWNSAMPLING LAYERS
+        self.down_blocks = nn.ModuleList()
         for l in range(n_layers):
             conv = nn.Conv1d(
                 in_channels=1 if l == 0 else self.n_filters[l-1],
@@ -117,63 +118,63 @@ class AFiLMNet(nn.Module):
             padding="same"
         )
 
-        # UPSAMPLING LAYERS - CORRECTION DU CALCUL DES CANAUX
+        # UPSAMPLING LAYERS - CORRECTION ICI
         self.up_blocks = nn.ModuleList()
-
-        for i, l in enumerate(reversed(range(n_layers))):
+        
+        # Pour chaque couche d'upsampling (dans l'ordre inverse)
+        for i in range(n_layers):
+            layer_idx = n_layers - 1 - i  # Index dans l'ordre original (3,2,1,0)
+            
             if i == 0:
-                # Première couche up : bottleneck après SubPixel + skip du dernier down layer
-                # SubPixel divise par 2 le nombre de canaux
-                upsampled_channels = self.n_filters[n_layers] // 2
-                in_channels = upsampled_channels + self.n_filters[l]
+                # Première couche up : vient du bottleneck seulement
+                in_channels = self.n_filters[n_layers]  # Sortie du bottleneck
             else:
-                # Autres couches : output précédent (après SubPixel) + skip correspondant
-                # La sortie de la couche précédente était n_filters[l+1], 
-                # après SubPixel elle devient n_filters[l+1] // 2
-                prev_layer_idx = n_layers - i  # l+1 dans l'ordre inverse
-                upsampled_channels = self.n_filters[prev_layer_idx] // 2
-                in_channels = upsampled_channels + self.n_filters[l]
+                # Autres couches : vient de la concaténation précédente
+                prev_layer_idx = n_layers - i  # Layer précédent dans l'ordre original
+                # Après concat : n_filters[prev_layer_idx] + n_filters[prev_layer_idx]  
+                in_channels = self.n_filters[prev_layer_idx] + self.n_filters[prev_layer_idx]
             
             conv = nn.Conv1d(
                 in_channels=in_channels,
-                out_channels=self.n_filters[l],  # Sortie normale, pas *2 car SubPixel vient après
-                kernel_size=self.n_filtersizes[l],
+                out_channels=self.n_filters[layer_idx] * 2,  # *2 pour SubPixel
+                kernel_size=self.n_filtersizes[layer_idx],
                 dilation=2,
                 padding="same"
             )
             self.up_blocks.append(conv)
-            # print(f"Up block {i}: in_channels={in_channels}, out_channels={self.n_filters[l]}")
+            
+        # Output layer - prend la dernière concaténation 
+        final_in_channels = self.n_filters[0] + self.n_filters[0]  # Dernière concat
+        self.out_conv = nn.Conv1d(final_in_channels, 2, kernel_size=9, padding=4)
 
-        # Output layer - elle doit produire 4 canaux pour SubPixel(r=2) -> 2 canaux finaux
-        # self.out_conv = nn.Conv1d(self.n_filters[0], 4, kernel_size=9, padding=4)
-        self.out_conv = nn.Conv1d(self.n_filters[0], 2, kernel_size=9, padding=4)
+        # Créer les modules AFiLM
+        self._create_afilm_modules()
 
-    def create_afilm_modules(self, input_steps):
+    def _create_afilm_modules(self):
         """Crée les modules AFiLM avec les bonnes dimensions."""
-        current_steps = input_steps
+        current_steps = self.input_length
         
         # Pour downsampling
-        afilm_down = []
+        self.afilm_down = nn.ModuleList()
         for l in range(self.n_layers):
             current_steps = current_steps // 2  # Max pool divise par 2
             block_size = max(1, min(current_steps, int(128 / (2**l))))
             afilm = AFiLM(current_steps, block_size=block_size, n_filters=self.n_filters[l])
-            afilm_down.append(afilm)
+            self.afilm_down.append(afilm)
         
         # Pour bottleneck
         current_steps = current_steps // 2
         block_size = max(1, min(current_steps, int(128 / (2**self.n_layers))))
-        bottleneck_afilm = AFiLM(current_steps, block_size=block_size, n_filters=self.n_filters[self.n_layers])
+        self.bottleneck_afilm = AFiLM(current_steps, block_size=block_size, n_filters=self.n_filters[self.n_layers])
         
         # Pour upsampling
-        afilm_up = []
-        for l in reversed(range(self.n_layers)):
+        self.afilm_up = nn.ModuleList()
+        for i in range(self.n_layers):
             current_steps = current_steps * 2  # SubPixel multiplie par 2
-            block_size = max(1, min(current_steps, int(128 / (2**l))))
-            afilm = AFiLM(current_steps, block_size=block_size, n_filters=self.n_filters[l])
-            afilm_up.append(afilm)
-            
-        return afilm_down, bottleneck_afilm, afilm_up
+            layer_idx = self.n_layers - 1 - i
+            block_size = max(1, min(current_steps, int(128 / (2**layer_idx))))
+            afilm = AFiLM(current_steps, block_size=block_size, n_filters=self.n_filters[layer_idx])
+            self.afilm_up.append(afilm)
 
     def forward(self, x):
         """
@@ -184,76 +185,57 @@ class AFiLMNet(nn.Module):
         if len(x.shape) == 2:
             x = x.unsqueeze(-1)  # [batch, steps] -> [batch, steps, 1]
 
-        batch_size, input_steps, _ = x.shape
-        
-        # Créer les modules AFiLM avec les bonnes dimensions
-        afilm_down, bottleneck_afilm, afilm_up = self.create_afilm_modules(input_steps)
-        
-        # Transférer sur le bon device
-        device = x.device
-        for afilm in afilm_down:
-            afilm.to(device)
-        bottleneck_afilm.to(device)
-        for afilm in afilm_up:
-            afilm.to(device)
+        # Vérifier la longueur d'entrée
+        if x.shape[1] != self.input_length:
+            raise ValueError(f"Input length {x.shape[1]} doesn't match expected {self.input_length}")
 
         skips = []
         out = x
 
         # Downsampling
-        for i, (conv, afilm) in enumerate(zip(self.down_blocks, afilm_down)):
+        for i, (conv, afilm) in enumerate(zip(self.down_blocks, self.afilm_down)):
             out = conv(out.transpose(1, 2)).transpose(1, 2)  # Conv1d attend (B,C,L)
             out = F.max_pool1d(out.transpose(1, 2), 2).transpose(1, 2)
             out = F.leaky_relu(out, 0.2)
             out = afilm(out)
             skips.append(out)
-            # print(f"Down layer {i}: {out.shape}")
 
         # Bottleneck
         out = self.bottleneck_conv(out.transpose(1, 2)).transpose(1, 2)
         out = F.max_pool1d(out.transpose(1, 2), 2).transpose(1, 2)
         out = F.dropout(out, 0.5, training=self.training)
         out = F.leaky_relu(out, 0.2)
-        out = bottleneck_afilm(out)
-        # print(f"Bottleneck: {out.shape}")
+        out = self.bottleneck_afilm(out)
 
-        # Upsampling - ORDRE CORRIGÉ
-        for i, (conv, afilm, skip) in enumerate(zip(self.up_blocks, afilm_up, reversed(skips))):
-            # 1. Upsampling FIRST
-            out = SubPixel1D(out, r=2)
-            # print(f"After upsampling {i}: {out.shape}")
+        # Upsampling - ORDRE TENSORFLOW CORRIGÉ
+        for i, (conv, afilm, skip) in enumerate(zip(self.up_blocks, self.afilm_up, reversed(skips))):
             
-            # 2. Concatenation avec skip
-            out = torch.cat([out, skip], dim=-1)
-            # print(f"After concat {i}: {out.shape}")
-            
-            # 3. Convolution
+            # 1 - Convolution (produit 2*nf canaux) 
             out = conv(out.transpose(1, 2)).transpose(1, 2)
             out = F.dropout(out, 0.5, training=self.training)
             out = F.relu(out)
-            # print(f"After conv {i}: {out.shape}")
-            
-            # 4. AFiLM
+
+            # 2 - SubPixel (2*nf -> nf canaux) - UPSAMPLING des dimensions temporelles
+            out = SubPixel1D(out, r=2)
+
+            # 3 - AFiLM 
             out = afilm(out)
-            # print(f"After AFiLM {i}: {out.shape}")
 
-        # Output - maintenant produit 4 canaux
+            # 4 - Concatenation avec le skip (APRÈS SubPixel pour aligner les dimensions)
+            out = torch.cat([out, skip], dim=-1)
+
+        # Output
         out = self.out_conv(out.transpose(1, 2)).transpose(1, 2)
-        out = SubPixel1D(out, r=2)  # 4 canaux -> 2 canaux
+        out = SubPixel1D(out, r=2)  # 2 -> 1 canal
 
-        # Residual connection - vérifier compatibilité
-        # if out.shape[1] == x.shape[1] and out.shape[2] >= x.shape[2]:
+        # Residual connection
         if out.shape[1] == x.shape[1] and out.shape[2] == x.shape[2]:
-
-            # Prendre seulement les premiers canaux si nécessaire
-            # residual = x if x.shape[2] == out.shape[2] else x.expand(-1, -1, out.shape[2])
-            # out = out + residual
             out = out + x
         else:
             print(f"Warning: Cannot add residual - shapes {out.shape} vs {x.shape}")
 
         return out.squeeze(-1)
 
-def get_afilm(n_layers=4, scale=4):
+def get_afilm(n_layers=4, scale=4, input_length=1024):
     """Factory function to create an AFiLMNet instance."""
-    return AFiLMNet(n_layers=n_layers, scale=scale)
+    return AFiLMNet(n_layers=n_layers, scale=scale, input_length=input_length)

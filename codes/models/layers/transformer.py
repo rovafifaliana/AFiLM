@@ -4,39 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 import math
 
-class PositionEmbedding(nn.Module):
-    """
-    PositionEmbedding: ajoute des embeddings de position
-    à une séquence déjà encodée (ex: sortie d'un nn.Embedding).
-    """
-
-    def __init__(self, maxlen, embed_dim):
-        super(PositionEmbedding, self).__init__()
-        self.maxlen = maxlen
-        self.embed_dim = embed_dim
-        self.pos_emb = nn.Embedding(maxlen, embed_dim)
-
-    def forward(self, x):
-        """
-        Args:
-            x (torch.Tensor): tenseur d'embeddings de tokens
-                              shape (batch_size, seq_len, embed_dim)
-
-        Returns:
-            torch.Tensor: embeddings enrichis avec positions
-                          shape (batch_size, seq_len, embed_dim)
-        """
-        batch_size, seq_len, _ = x.shape
-
-        # positions = [0, 1, ..., seq_len-1]
-        positions = torch.arange(0, seq_len, device=x.device, dtype=torch.long)
-
-        # embeddings de position (seq_len, embed_dim)
-        pos_embeddings = self.pos_emb(positions)
-
-        # broadcasting : (batch_size, seq_len, embed_dim)
-        return x + pos_embeddings.unsqueeze(0)
-
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embed_dim, num_heads=8):
         super(MultiHeadSelfAttention, self).__init__()
@@ -50,7 +17,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.projection_dim = embed_dim // num_heads
 
-        # équivalents de Dense de Keras → Linear en PyTorch
+        # Linear layers (équivalents de Dense de Keras)
         self.query_dense = nn.Linear(embed_dim, embed_dim)
         self.key_dense   = nn.Linear(embed_dim, embed_dim)
         self.value_dense = nn.Linear(embed_dim, embed_dim)
@@ -120,20 +87,20 @@ class EncoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(rate)
         self.dropout2 = nn.Dropout(rate)
 
-    def forward(self, inputs, training=False):
+    def forward(self, inputs):
         """
         inputs: (batch_size, seq_len, embed_dim)
-        training: bool, active les dropouts
+        Utilise automatiquement self.training pour les dropouts
         """
         # Multi-head self-attention
         attn_output = self.att(inputs)                       # (batch, seq_len, embed_dim)
-        attn_output = self.dropout1(attn_output) if training else attn_output
+        attn_output = self.dropout1(attn_output)             # Dropout automatique selon self.training
         out1 = self.layernorm1(inputs + attn_output)        # Add & Norm
 
         # Feed-forward
         ffn_output = F.relu(self.dense1(out1))
         ffn_output = self.dense2(ffn_output)
-        ffn_output = self.dropout2(ffn_output) if training else ffn_output
+        ffn_output = self.dropout2(ffn_output)               # Dropout automatique selon self.training
 
         # Add & Norm
         return self.layernorm2(out1 + ffn_output)
@@ -158,7 +125,7 @@ class TransformerBlock(nn.Module):
         self.embed_dim = embed_dim
         self.num_layers = num_layers
         
-        # Position encoding buffer
+        # Position encoding buffer (non-trainable)
         self.register_buffer('pos_encoding', positional_encoding(maximum_position_encoding, embed_dim))
         
         # Encoder layers
@@ -178,6 +145,6 @@ class TransformerBlock(nn.Module):
         x = self.dropout(x)
         
         # pass through encoder layers
-        for i in range(self.num_layers):
-            x = self.enc_layers[i](x, training=self.training)  # use module's training flag
+        for layer in self.enc_layers:
+            x = layer(x)  # Plus besoin de passer training explicitement
         return x  # (batch_size, seq_len, embed_dim)

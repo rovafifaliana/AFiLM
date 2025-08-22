@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import h5py
+import math
 
 from models.afilm import get_afilm
 from models.tfilm import get_tfilm
@@ -41,7 +42,7 @@ def make_parser():
         help='optimization algorithm')
     train_parser.add_argument('--lr', default=3e-4, type=float,
         help='learning rate')
-    train_parser.add_argument('--save_path', default="model_afilm_single_2.pth",
+    train_parser.add_argument('--save_path', default="model.pth",
         help='path to save the model')
     train_parser.add_argument('--r', type=int, default=4, help='upscaling factor')
     train_parser.add_argument('--pool_size', type=int, default=4, help='size of pooling window')
@@ -60,8 +61,19 @@ def get_model(args):
     return model
 
 
+class RMSELoss(nn.Module):
+    """Root Mean Square Error Loss - equivalent to TensorFlow's RootMeanSquaredError"""
+    def __init__(self):
+        super(RMSELoss, self).__init__()
+        self.mse = nn.MSELoss()
+        
+    def forward(self, pred, target):
+        return torch.sqrt(self.mse(pred, target))
+
+
 def train(args):
     """Train the model based on the provided arguments."""
+    # Device selection (same logic as original)
     if torch.backends.mps.is_available():
         device = torch.device("mps")
     elif torch.cuda.is_available():
@@ -76,58 +88,107 @@ def train(args):
     X_train, Y_train = load_h5(args.train)
     X_val, Y_val = load_h5(args.val)
 
-    train_loader = DataLoader(TensorDataset(X_train, Y_train), 
-                              batch_size=args.batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(TensorDataset(X_val, Y_val), 
-                            batch_size=args.batch_size)
+    # Create data loaders
+    train_loader = DataLoader(
+        TensorDataset(X_train, Y_train), 
+        batch_size=args.batch_size, 
+        shuffle=True, 
+        num_workers=2
+    )
+    val_loader = DataLoader(
+        TensorDataset(X_val, Y_val), 
+        batch_size=args.batch_size,
+        shuffle=False
+    )
 
     # Model
     model = get_model(args).to(device)
 
-    # Optimizer
+    # Optimizer (matching TensorFlow version exactly)
     if args.alg == 'adam':
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
     else:
         raise ValueError("Only Adam supported for now")
 
-    criterion = nn.MSELoss()
+    # Loss functions - both MSE and RMSE like in TensorFlow version
+    criterion_mse = nn.MSELoss()
+    criterion_rmse = RMSELoss()
 
+    # Training loop
     for epoch in range(args.epochs):
+        # Training phase
         model.train()
-        train_loss = 0.0
+        train_loss_mse = 0.0
+        train_loss_rmse = 0.0
+        train_samples = 0
 
-        for X, Y in train_loader:
+        for batch_idx, (X, Y) in enumerate(train_loader):
             X, Y = X.to(device), Y.to(device)
+            
+            # Forward pass
             optimizer.zero_grad()
             outputs = model(X)
-            if outputs.dim() == 3 and outputs.shape[-1] == 2:
-                outputs = outputs[:, :, 0]
-            # print(f"Outputs shape: {outputs.shape}")
-            # print(f"Y shape: {Y.shape}")
-            loss = criterion(outputs, Y)
-            loss.backward()
+            
+            # Calculate losses
+            loss_mse = criterion_mse(outputs, Y)
+            loss_rmse = criterion_rmse(outputs, Y)
+            
+            # Backward pass
+            loss_mse.backward()
             optimizer.step()
-            train_loss += loss.item() * X.size(0)
+            
+            # Accumulate losses
+            batch_size = X.size(0)
+            train_loss_mse += loss_mse.item() * batch_size
+            train_loss_rmse += loss_rmse.item() * batch_size
+            train_samples += batch_size
 
-        train_loss /= len(train_loader.dataset)
+        # Calculate average training losses
+        avg_train_loss_mse = train_loss_mse / train_samples
+        avg_train_loss_rmse = train_loss_rmse / train_samples
 
-        # Validation
+        # Validation phase
         model.eval()
-        val_loss = 0.0
+        val_loss_mse = 0.0
+        val_loss_rmse = 0.0
+        val_samples = 0
+        
         with torch.no_grad():
             for X, Y in val_loader:
                 X, Y = X.to(device), Y.to(device)
                 outputs = model(X)
-                loss = criterion(outputs, Y)
-                val_loss += loss.item() * X.size(0)
+                
+                # Calculate validation losses
+                loss_mse = criterion_mse(outputs, Y)
+                loss_rmse = criterion_rmse(outputs, Y)
+                
+                batch_size = X.size(0)
+                val_loss_mse += loss_mse.item() * batch_size
+                val_loss_rmse += loss_rmse.item() * batch_size
+                val_samples += batch_size
 
-        val_loss /= len(val_loader.dataset)
+        # Calculate average validation losses
+        avg_val_loss_mse = val_loss_mse / val_samples
+        avg_val_loss_rmse = val_loss_rmse / val_samples
 
-        print(f"Epoch {epoch+1}/{args.epochs} - Train Loss: {train_loss:.6f} - Val Loss: {val_loss:.6f}")
+        # Print metrics (matching TensorFlow format)
+        print(f"Epoch {epoch+1}/{args.epochs}")
+        print(f"  Train - Loss (MSE): {avg_train_loss_mse:.6f} - RMSE: {avg_train_loss_rmse:.6f}")
+        print(f"  Val   - Loss (MSE): {avg_val_loss_mse:.6f} - RMSE: {avg_val_loss_rmse:.6f}")
 
-        # Save checkpoint with epoch number
-        # torch.save(model.state_dict(), args.save_path)
-        torch.save(model.state_dict(), f"{args.save_path}_epoch{epoch+1}.pth")
+        # Save model after each epoch (like TensorFlow CustomCheckpoint)
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'train_loss_mse': avg_train_loss_mse,
+            'train_loss_rmse': avg_train_loss_rmse,
+            'val_loss_mse': avg_val_loss_mse,
+            'val_loss_rmse': avg_val_loss_rmse,
+            'args': args
+        }, args.save_path)
+
+    print(f"Training completed. Final model saved to {args.save_path}")
 
 
 def main():

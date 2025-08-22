@@ -93,7 +93,7 @@ def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024
         first_block = data["train_blocks"][0]
         if first_block.get("files"):
             print(f"Processing first training block with {len(first_block['files'])} files...")
-            train_h5_path = os.path.join(output_dir, "train_block_0.h5")
+            train_h5_path = os.path.join(output_dir, "train281.h5")
             wavs_to_h5_from_files(
                 file_list=first_block["files"],
                 h5_path=train_h5_path,
@@ -106,36 +106,36 @@ def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024
     else:
         print("Warning: No training blocks found in JSON")
     
-    # # Traiter les données de validation
-    # if data.get("val") and data["val"].get("files"):
-    #     print(f"Processing validation data with {len(data['val']['files'])} files...")
-    #     val_h5_path = os.path.join(output_dir, "val.h5")
-    #     wavs_to_h5_from_files(
-    #         file_list=data["val"]["files"],
-    #         h5_path=val_h5_path,
-    #         sr=sr,
-    #         r=r,
-    #         patch_size=patch_size
-    #     )
-    # else:
-    #     print("Warning: No validation files found in JSON")
+    # Traiter les données de validation
+    if data.get("val") and data["val"].get("files"):
+        print(f"Processing validation data with {len(data['val']['files'])} files...")
+        val_h5_path = os.path.join(output_dir, "val281.h5")
+        wavs_to_h5_from_files(
+            file_list=data["val"]["files"],
+            h5_path=val_h5_path,
+            sr=sr,
+            r=r,
+            patch_size=patch_size
+        )
+    else:
+        print("Warning: No validation files found in JSON")
 
-    # if data.get("test") and data["test"].get("files"):
-    #     print(f"Processing test data with {len(data['test']['files'])} files...")
-    #     test_h5_path = os.path.join(output_dir, "test.h5")
-    #     wavs_to_h5_from_files(
-    #         file_list=data["test"]["files"],
-    #         h5_path=test_h5_path,
-    #         sr=sr,
-    #         r=r,
-    #         patch_size=patch_size
-    #     )
-    # else:
-    #     print("Warning: No test files found in JSON")
+    if data.get("test") and data["test"].get("files"):
+        print(f"Processing test data with {len(data['test']['files'])} files...")
+        test_h5_path = os.path.join(output_dir, "test281.h5")
+        wavs_to_h5_from_files(
+            file_list=data["test"]["files"],
+            h5_path=test_h5_path,
+            sr=sr,
+            r=r,
+            patch_size=patch_size
+        )
+    else:
+        print("Warning: No test files found in JSON")
 
 def main():
     # Paramètres
-    json_file = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/data_splits_1.json"
+    json_file = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/single_speaker_splits_p281.json"
     output_directory = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_single_dataset" 
     
     # Traitement
