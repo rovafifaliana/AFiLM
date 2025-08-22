@@ -106,24 +106,37 @@ def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024
     else:
         print("Warning: No training blocks found in JSON")
     
-    # Traiter les données de validation
-    if data.get("val") and data["val"].get("files"):
-        print(f"Processing validation data with {len(data['val']['files'])} files...")
-        val_h5_path = os.path.join(output_dir, "val.h5")
-        wavs_to_h5_from_files(
-            file_list=data["val"]["files"],
-            h5_path=val_h5_path,
-            sr=sr,
-            r=r,
-            patch_size=patch_size
-        )
-    else:
-        print("Warning: No validation files found in JSON")
+    # # Traiter les données de validation
+    # if data.get("val") and data["val"].get("files"):
+    #     print(f"Processing validation data with {len(data['val']['files'])} files...")
+    #     val_h5_path = os.path.join(output_dir, "val.h5")
+    #     wavs_to_h5_from_files(
+    #         file_list=data["val"]["files"],
+    #         h5_path=val_h5_path,
+    #         sr=sr,
+    #         r=r,
+    #         patch_size=patch_size
+    #     )
+    # else:
+    #     print("Warning: No validation files found in JSON")
+
+    # if data.get("test") and data["test"].get("files"):
+    #     print(f"Processing test data with {len(data['test']['files'])} files...")
+    #     test_h5_path = os.path.join(output_dir, "test.h5")
+    #     wavs_to_h5_from_files(
+    #         file_list=data["test"]["files"],
+    #         h5_path=test_h5_path,
+    #         sr=sr,
+    #         r=r,
+    #         patch_size=patch_size
+    #     )
+    # else:
+    #     print("Warning: No test files found in JSON")
 
 def main():
     # Paramètres
     json_file = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/data_splits_1.json"
-    output_directory = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_dataset"  # Répertoire de sortie
+    output_directory = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_single_dataset" 
     
     # Traitement
     process_json_to_h5(
