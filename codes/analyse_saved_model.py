@@ -6,6 +6,9 @@ import glob
 from models.afilm import get_afilm
 from models.tfilm import get_tfilm
 
+import sys
+sys.path.append("/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/")
+
 def analyze_saved_models():
     """Analyze all saved model checkpoints."""
     
@@ -65,7 +68,7 @@ def evaluate_model_performance(model_path, val_data_path, model_type='afilm', la
         raise ValueError(f"Unknown model type: {model_type}")
     
     # Load saved weights
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
     model.to(device)
     model.eval()
     
@@ -145,15 +148,13 @@ def compare_all_epochs(val_data_path, model_type='afilm', layers=4, scale=4):
 if __name__ == "__main__":
     # analyze_saved_models()
     
-    VAL_DATA_PATH = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_single_dataset/test281.h5" 
-    VAL_DATA_PATH_1 = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_single_dataset/val287.h5"
+    VAL_DATA_PATH = "vctk_single_dataset/test299.h5" 
 
-    MODEL_PATH = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/model_afilm_single_2.pth_epoch10.pth"
+    MODEL_PATH = "model_x2.pth"
     MODEL_TYPE = "afilm"  # or "tfilm"
     
     # evaluate specific model performance
     evaluate_model_performance(MODEL_PATH, VAL_DATA_PATH, MODEL_TYPE)
-    evaluate_model_performance(MODEL_PATH, VAL_DATA_PATH_1, MODEL_TYPE)
 
     
     # compare all epochs (uncomment the line below)

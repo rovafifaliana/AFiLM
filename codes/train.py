@@ -40,13 +40,18 @@ def make_parser():
         help='number of layers in each of the D and U halves of the network')
     train_parser.add_argument('--alg', default='adam',
         help='optimization algorithm')
-    train_parser.add_argument('--lr', default=3e-4, type=float,
+    train_parser.add_argument('--lr', default=1e-4, type=float,
         help='learning rate')
     train_parser.add_argument('--save_path', default="model.pth",
         help='path to save the model')
     train_parser.add_argument('--r', type=int, default=4, help='upscaling factor')
     train_parser.add_argument('--pool_size', type=int, default=4, help='size of pooling window')
     train_parser.add_argument('--strides', type=int, default=4, help='pooling stride')
+    
+    # NOUVEAU: Argument pour continuer l'entraînement
+    train_parser.add_argument('--resume', type=str, default=None,
+        help='path to checkpoint to resume training from')
+    
     return train_parser
 
 
@@ -82,7 +87,31 @@ def train(args):
         device = torch.device("cpu")
 
     print(f"Using device: {device}")
+    
+    # Variables pour reprendre l'entraînement
+    start_epoch = 0
+    
+    # NOUVEAU: Charger le checkpoint si spécifié
+    if args.resume:
+        print(f"Resuming training from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device, weights_only=False)
+        
+        # Récupérer les arguments du checkpoint (pour s'assurer de la cohérence)
+        if 'args' in checkpoint:
+            saved_args = checkpoint['args']
+            # Vérifier la cohérence des paramètres critiques
+            if (saved_args.model != args.model or 
+                saved_args.layers != args.layers or 
+                saved_args.r != args.r):
+                print("WARNING: Model parameters differ from checkpoint!")
+                print(f"Checkpoint: model={saved_args.model}, layers={saved_args.layers}, r={saved_args.r}")
+                print(f"Current:    model={args.model}, layers={args.layers}, r={args.r}")
+        
+        start_epoch = checkpoint['epoch']
+        print(f"Resuming from epoch {start_epoch + 1}")
+    
     print(f"Training model: {args.model} with {args.layers} layers and upscaling factor {args.r}")
+    print(f"Training for {args.epochs} total epochs (starting from epoch {start_epoch + 1})")
 
     # Load data
     X_train, Y_train = load_h5(args.train)
@@ -110,12 +139,20 @@ def train(args):
     else:
         raise ValueError("Only Adam supported for now")
 
+    # NOUVEAU: Charger les poids et l'état de l'optimiseur si on reprend
+    if args.resume:
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print(f"Loaded model and optimizer state from checkpoint")
+        print(f"Previous training loss (MSE): {checkpoint.get('train_loss_mse', 'N/A'):.6f}")
+        print(f"Previous validation loss (MSE): {checkpoint.get('val_loss_mse', 'N/A'):.6f}")
+
     # Loss functions - both MSE and RMSE like in TensorFlow version
     criterion_mse = nn.MSELoss()
     criterion_rmse = RMSELoss()
 
-    # Training loop
-    for epoch in range(args.epochs):
+    # Training loop - MODIFIÉ pour commencer à la bonne époque
+    for epoch in range(start_epoch, args.epochs):
         # Training phase
         model.train()
         train_loss_mse = 0.0
@@ -175,6 +212,20 @@ def train(args):
         print(f"Epoch {epoch+1}/{args.epochs}")
         print(f"  Train - Loss (MSE): {avg_train_loss_mse:.6f} - RMSE: {avg_train_loss_rmse:.6f}")
         print(f"  Val   - Loss (MSE): {avg_val_loss_mse:.6f} - RMSE: {avg_val_loss_rmse:.6f}")
+
+        # Early stopping logic
+        if epoch == start_epoch:
+            best_val_loss = avg_val_loss_mse
+            patience_counter = 0
+        else:
+            if avg_val_loss_mse < best_val_loss:
+                best_val_loss = avg_val_loss_mse
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= 5:
+                    print(f"Early stopping triggered at epoch {epoch+1}.")
+                    break
 
         # Save model after each epoch (like TensorFlow CustomCheckpoint)
         torch.save({
