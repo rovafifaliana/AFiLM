@@ -8,13 +8,13 @@ from pathlib import Path
 
 def wavs_to_h5_from_files(file_list, h5_path, sr=16000, r=4, patch_size=1024):
     """
-    Convertit une liste de fichiers .wav en un fichier .h5 contenant les données LR et HR.
+    Converts a list of .wav files into an .h5 file containing LR and HR data.
     Args:
-        file_list (list): liste des chemins vers les fichiers .wav
-        h5_path (str): chemin du fichier de sortie .h5
-        sr (int): sample rate cible
-        r (int): facteur de sous-échantillonnage (ex: 4 → HR=16kHz, LR=4kHz)
-        patch_size (int): taille des patches pour l'entraînement
+        file_list (list): list of paths to .wav files
+        h5_path (str): output .h5 file path
+        sr (int): target sample rate
+        r (int): downsampling factor (e.g., 4 → HR=16kHz, LR=4kHz)
+        patch_size (int): patch size for training
     """
     X_list, Y_list = [], []
     
@@ -24,27 +24,27 @@ def wavs_to_h5_from_files(file_list, h5_path, sr=16000, r=4, patch_size=1024):
             
         # print(f"Processing {wav_path}...")
         
-        # Vérifier si le fichier existe
+        # Check if file exists
         if not os.path.exists(wav_path):
             print(f"Warning: File {wav_path} not found, skipping...")
             continue
             
         try:
-            # Charger audio HR
+            # Load HR audio
             y_hr, _ = librosa.load(wav_path, sr=sr)
             
-            # Créer la version LR en sous-échantillonnant
+            # Create LR version by downsampling
             y_lr = y_hr[::r]
             
-            # Remettre y_lr à la même longueur que y_hr via upsampling simple
+            # Restore y_lr to the same length as y_hr via simple upsampling
             y_lr_up = librosa.resample(y_lr, orig_sr=sr//r, target_sr=sr)
             
-            # Ajuster la taille pour multiples de patch_size
+            # Adjust size for multiples of patch_size
             min_len = min(len(y_hr), len(y_lr_up))
             y_hr = y_hr[:min_len]
             y_lr_up = y_lr_up[:min_len]
             
-            # Découper en patches
+            # Split into patches
             n_patches = min_len // patch_size
             for i in range(n_patches):
                 start = i * patch_size
@@ -60,11 +60,11 @@ def wavs_to_h5_from_files(file_list, h5_path, sr=16000, r=4, patch_size=1024):
         print(f"Warning: No valid patches found for {h5_path}")
         return
     
-    # Conversion en numpy
+    # Convert to numpy
     X = np.array(X_list, dtype=np.float32)
     Y = np.array(Y_list, dtype=np.float32)
     
-    # Sauvegarde dans h5
+    # Save to h5
     with h5py.File(h5_path, "w") as hf:
         hf.create_dataset("X", data=X)
         hf.create_dataset("Y", data=Y)
@@ -73,22 +73,22 @@ def wavs_to_h5_from_files(file_list, h5_path, sr=16000, r=4, patch_size=1024):
 
 def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024):
     """
-    Traite le fichier JSON pour convertir le premier bloc d'entraînement et les données de validation en H5.
+    Processes the JSON file to convert the first training block and validation data to H5.
     Args:
-        json_path (str): chemin vers le fichier JSON
-        output_dir (str): répertoire de sortie pour les fichiers .h5
-        sr (int): sample rate cible
-        r (int): facteur de sous-échantillonnage
-        patch_size (int): taille des patches
+        json_path (str): path to JSON file
+        output_dir (str): output directory for .h5 files
+        sr (int): target sample rate
+        r (int): downsampling factor
+        patch_size (int): patch size
     """
-    # Charger le fichier JSON
+    # Load JSON file
     with open(json_path, 'r') as f:
         data = json.load(f)
     
-    # Créer le répertoire de sortie s'il n'existe pas
+    # Create output directory if it doesn't exist
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    # Traiter le premier bloc d'entraînement
+    # Process first training block
     if data.get("train_blocks") and len(data["train_blocks"]) > 0:
         first_block = data["train_blocks"][0]
         if first_block.get("files"):
@@ -106,7 +106,7 @@ def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024
     else:
         print("Warning: No training blocks found in JSON")
     
-    # Traiter les données de validation
+    # Process validation data
     if data.get("val") and data["val"].get("files"):
         print(f"Processing validation data with {len(data['val']['files'])} files...")
         val_h5_path = os.path.join(output_dir, "val281.h5")
@@ -134,11 +134,11 @@ def process_json_to_h5(json_path, output_dir=".", sr=16000, r=4, patch_size=1024
         print("Warning: No test files found in JSON")
 
 def main():
-    # Paramètres
-    json_file = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/single_speaker_splits_p281.json"
-    output_directory = "/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/vctk_single_dataset" 
+    # Parameters
+    json_file = "single_speaker_splits_p281.json"
+    output_directory = "vctk_single_dataset" 
     
-    # Traitement
+    # Processing
     process_json_to_h5(
         json_path=json_file,
         output_dir=output_directory,

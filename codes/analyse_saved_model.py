@@ -7,7 +7,7 @@ from models.afilm import get_afilm
 from models.tfilm import get_tfilm
 
 import sys
-sys.path.append("/Users/rovafifaliana/Documents/MISA/machine_learning/evaluation2/AFiLM_conversion/")
+sys.path.append("")
 
 def analyze_saved_models():
     """Analyze all saved model checkpoints."""
@@ -146,8 +146,6 @@ def compare_all_epochs(val_data_path, model_type='afilm', layers=4, scale=4):
 
 
 if __name__ == "__main__":
-    # analyze_saved_models()
-    
     VAL_DATA_PATH = "vctk_single_dataset/test299.h5" 
 
     MODEL_PATH = "model_x2.pth"
